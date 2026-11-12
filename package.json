@@ -1,0 +1,26 @@
+{
+  "name": "banquet-verify-h5",
+  "version": "1.0.0",
+  "private": true,
+  "description": "水井坊宴席主家信息验真 H5 独立端",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:prod": "vite build --mode production",
+    "build:stage": "vite build --mode staging",
+    "build:dev": "vite build --mode development",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "1.9.0",
+    "vue": "3.5.16",
+    "vue-router": "4.5.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "5.2.4",
+    "sass-embedded": "1.89.1",
+    "vite": "6.3.5"
+  }
+}
+
