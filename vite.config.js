@@ -39,8 +39,8 @@ export default defineConfig(({ mode }) => {
       allowedHosts: true,
       open: false,
       proxy: {
-        // 宴席主家验真 H5 免登录接口代理（miniapp-auth 网关）
-        '/rest/banquet': {
+        // 宴席主家验真 H5 免登录接口及数据字典接口代理（miniapp-auth 网关）
+        '/rest': {
           // target: env.VITE_PROXY_TARGET || 'https://ec5apitest.swellfun.com',
           target: 'https://wechatapp5master.swellfun.com', // UAT 环境网关
           changeOrigin: true

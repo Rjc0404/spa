@@ -47,3 +47,15 @@ export async function submitBanquetVerify({ token, image, idNo }) {
   })
   return response.data
 }
+
+/**
+ * 3. 根据字典类型编码查询字典项列表（H5免登录）
+ * GET /rest/tsa/dictDataRestApiController/getValuesByCode?type=banquetHostVerifyStatus
+ * @param {string} type - 字典组编码
+ */
+export async function getDictValuesByCode(type) {
+  const response = await h5Http.get('/rest/tsa/dictDataRestApiController/getValuesByCode', {
+    params: { type }
+  })
+  return response.data
+}

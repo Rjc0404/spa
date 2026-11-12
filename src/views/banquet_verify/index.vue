@@ -59,7 +59,7 @@
         <!-- 卡片1：主家验真状态 -->
         <div class="banquet-status-card">
           <span class="banquet-status-label">主家验真状态</span>
-          <div class="banquet-status-badge" :class="statusBadgeClass">
+          <div v-if="statusText" class="banquet-status-badge" :class="statusBadgeClass">
             <span class="banquet-status-dot" :class="statusDotClass"></span>
             <span>{{ statusText }}</span>
           </div>
@@ -250,7 +250,8 @@ import { useRoute } from 'vue-router'
 import marriageCertSampleImg from '@/assets/images/marriage_cert_sample.png'
 import {
   getBanquetVerifyInfo,
-  submitBanquetVerify
+  submitBanquetVerify,
+  getDictValuesByCode
 } from '@/api/banquetVerify'
 
 const route = useRoute()
@@ -267,18 +268,6 @@ const VERIFY_STATUS = {
   UNVERIFIED: '1',
   PASSED: '2',
   FAILED: '3'
-}
-
-/**
- * 宴席类型字典（对齐清单 3.3 & 9.1 节）：
- * '1' - 婚宴, '2' - 生日宴, '3' - 商务宴, '4' - 升学宴, '5' - 其他
- */
-const BANQUET_TYPE_MAP = {
-  '1': '婚宴',
-  '2': '生日宴',
-  '3': '商务宴',
-  '4': '升学宴',
-  '5': '其他'
 }
 
 // 从 URL query 获取验真 token（兼容短信短链 ?c=xxx 以及 ?token=xxx、?code=xxx）
@@ -387,15 +376,18 @@ const lockTextLines = computed(() => {
 // 轻提示 Toast 按逗号切分多行展示
 const toastLines = computed(() => splitMessageLines(toastMessage.value))
 
-// 状态胶囊文案与样式（对应字典 banquetHostVerifyStatus）
+// 数据字典映射表（由接口 GET /rest/tsa/dictDataRestApiController/getValuesByCode 动态填充）
+const verifyStatusDictMap = ref({}) // type=banquetHostVerifyStatus
+const banquetTypeDictMap = ref({}) // type=banquetType
+
+// 状态胶囊文案与样式（通过接口字典 banquetHostVerifyStatus 翻译）
 const statusText = computed(() => {
-  const statusMap = {
-    [VERIFY_STATUS.NO_NEED]: '无需验真',
-    [VERIFY_STATUS.UNVERIFIED]: '未验真',
-    [VERIFY_STATUS.PASSED]: '验真通过',
-    [VERIFY_STATUS.FAILED]: '验真未通过'
-  }
-  return statusMap[normalizedVerifyStatus.value] || '未验真'
+  const raw = String(banquetInfo.value.verifyStatus ?? '')
+  return (
+    verifyStatusDictMap.value[raw] ||
+    verifyStatusDictMap.value[normalizedVerifyStatus.value] ||
+    ''
+  )
 })
 
 const statusBadgeClass = computed(() => {
@@ -418,10 +410,14 @@ const statusDotClass = computed(() => {
   return 'banquet-dot-unverified'
 })
 
-// 宴席类型展示文案（支持码值 '1'~'5' 自动转中文，也支持直接传入中文）
+// 宴席类型展示文案（通过接口字典 banquetType 动态翻译）
 const banquetTypeText = computed(() => {
-  const raw = String(banquetInfo.value.banquetType ?? '')
-  return BANQUET_TYPE_MAP[raw] || raw || '-'
+  const raw = String(banquetInfo.value.banquetType ?? '').trim()
+  if (!raw) return '-'
+  if (banquetTypeDictMap.value[raw]) {
+    return banquetTypeDictMap.value[raw]
+  }
+  return /^\d+$/.test(raw) ? '-' : raw
 })
 
 // 格式化宴席日期（兼容后端 Jackson 默认序列化出的毫秒时间戳 Number 或字符串）
@@ -822,7 +818,28 @@ function handleConfirmFailedModal() {
   banquetInfo.value.verifyStatus = VERIFY_STATUS.FAILED
 }
 
-// 初始化加载宴席验真详情（调用 GET /rest/banquet/hostVerify/info?token=xxx）
+// 通用字典加载函数（GET /rest/tsa/dictDataRestApiController/getValuesByCode?type=xxx）
+async function fetchDictByCode(dictType, targetRef) {
+  try {
+    const res = await getDictValuesByCode(dictType)
+    const list = Array.isArray(res)
+      ? res
+      : res && Array.isArray(res.data)
+        ? res.data
+        : []
+    const map = {}
+    list.forEach((item) => {
+      if (item && item.dictCode !== undefined && item.dictCode !== null) {
+        map[String(item.dictCode).trim()] = String(item.dictValue || '').trim()
+      }
+    })
+    targetRef.value = map
+  } catch (err) {
+    console.error(`获取数据字典(${dictType})失败:`, err)
+  }
+}
+
+// 初始化加载宴席验真详情与数据字典（状态字典 + 宴席类型字典并发请求）
 async function fetchInitData() {
   document.title = '宴席主家信息验真'
   if (!verifyToken.value) {
@@ -838,7 +855,11 @@ async function fetchInitData() {
   }, 250)
 
   try {
-    const res = await getBanquetVerifyInfo(verifyToken.value)
+    const [res] = await Promise.all([
+      getBanquetVerifyInfo(verifyToken.value),
+      fetchDictByCode('banquetHostVerifyStatus', verifyStatusDictMap),
+      fetchDictByCode('banquetType', banquetTypeDictMap)
+    ])
     if (!res || typeof res !== 'object') {
       banquetInfo.value.valid = false
       banquetInfo.value.invalidReason = '验真链接无效或已过期，不可进行身份验真'

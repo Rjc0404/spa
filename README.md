@@ -12,9 +12,3 @@ npm run build:stage
 # 构建生产包
 npm run build:prod
 ```
-
-## 访问地址
-
-- **真实接口联调**：`http://localhost:80/?token=xxx` 或 `http://localhost:80/banquet-verify?token=xxx`
-- **纯前端图1~图12全状态预览**：`http://localhost:80/?mock=1`
-
