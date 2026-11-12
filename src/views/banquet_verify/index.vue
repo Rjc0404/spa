@@ -159,7 +159,13 @@
 
           <!-- 底部提交按钮 -->
           <div class="banquet-submit-wrap">
-            <button type="button" class="banquet-submit-btn" @click="handleSubmitVerify">
+            <button
+              type="button"
+              class="banquet-submit-btn"
+              :class="{ 'banquet-btn-disabled': isSubmitting }"
+              :disabled="isSubmitting"
+              @click="handleSubmitVerify"
+            >
               {{ submitButtonText }}
             </button>
           </div>
@@ -245,7 +251,7 @@
 </template>
 
 <script setup name="BanquetVerify">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import marriageCertSampleImg from '@/assets/images/marriage_cert_sample.png'
 import {
@@ -317,6 +323,7 @@ const ocrErrorText = ref('未识别到有效的结婚证编号或身份证号，
 const idCardNumber = ref('')
 const idCardErrorTip = ref('')
 const activeModal = ref('') // '' | 'verifying' | 'passed' | 'failed' | 'limit'
+const isSubmitting = ref(false)
 const showSampleModal = ref(false)
 const toastMessage = ref('')
 let toastTimer = null
@@ -420,11 +427,11 @@ const banquetTypeText = computed(() => {
   return /^\d+$/.test(raw) ? '-' : raw
 })
 
-// 格式化宴席日期（兼容后端 Jackson 默认序列化出的毫秒时间戳 Number 或字符串）
+// 格式化宴席日期（兼容后端毫秒时间戳 Number 与字符串格式，自动省略末尾 00:00:00 或秒位 :00）
 function formatBanquetDate(val) {
   if (val === undefined || val === null || val === '') return ''
-  if (typeof val === 'number' || /^\d{10,13}$/.test(String(val).trim())) {
-    const str = String(val).trim()
+  const str = String(val).trim()
+  if (typeof val === 'number' || /^\d{10,13}$/.test(str)) {
     const ts = str.length === 10 ? Number(str) * 1000 : Number(str)
     const d = new Date(ts)
     if (!isNaN(d.getTime())) {
@@ -438,7 +445,9 @@ function formatBanquetDate(val) {
         : `${yyyy}-${mm}-${dd} ${hh}:${mi}`
     }
   }
-  return String(val)
+  return str
+    .replace(/\s+00:00(:00)?$/, '')
+    .replace(/^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}):00$/, '$1')
 }
 
 // 宴席时间展示（兼容 banquetDate 与 banquetTime，确保始终返回字符串）
@@ -556,13 +565,25 @@ function showToast(msg, duration = 2600) {
   }, duration)
 }
 
-// 返回上一页
+// 返回上一页（兼容短信/微信内置浏览器直接打开无历史栈场景）
 function handleBack() {
   if (window.history.length > 1) {
     window.history.back()
-  } else {
-    window.close()
+    return
   }
+  if (window.WeixinJSBridge && typeof window.WeixinJSBridge.call === 'function') {
+    window.WeixinJSBridge.call('closeWindow')
+    return
+  }
+  window.close()
+}
+
+// 释放结婚证预览 ObjectURL 内存
+function revokeCertPreview() {
+  if (certPreviewUrl.value && certPreviewUrl.value.startsWith('blob:')) {
+    URL.revokeObjectURL(certPreviewUrl.value)
+  }
+  certPreviewUrl.value = ''
 }
 
 // 触发选择结婚证照片
@@ -573,10 +594,10 @@ function triggerFileSelect() {
   }
 }
 
-// 前端压缩图片（避免手机拍照原图超过 10MB 限制或上传缓慢）
+// 前端压缩图片（避免手机拍照原图超过 10MB 限制或上传缓慢，兼容低版本安卓 WebView）
 function compressImageFile(file, maxWidth = 1600, quality = 0.82) {
   return new Promise((resolve) => {
-    if (!file || !file.type.startsWith('image/') || file.size <= 1.2 * 1024 * 1024) {
+    if (!file || !file.type || !file.type.startsWith('image/') || file.size <= 1.2 * 1024 * 1024) {
       resolve(file)
       return
     }
@@ -594,17 +615,28 @@ function compressImageFile(file, maxWidth = 1600, quality = 0.82) {
         canvas.width = width
         canvas.height = height
         const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          resolve(file)
+          return
+        }
         ctx.drawImage(img, 0, 0, width, height)
         canvas.toBlob(
           (blob) => {
-            if (blob) {
-              const compressed = new File([blob], file.name, {
+            if (!blob || blob.size >= file.size) {
+              resolve(file)
+              return
+            }
+            const baseName = (file.name || 'marriage_cert').replace(/\.[^.]+$/, '')
+            const targetName = `${baseName}.jpg`
+            try {
+              const compressed = new File([blob], targetName, {
                 type: 'image/jpeg',
                 lastModified: Date.now()
               })
               resolve(compressed)
-            } else {
-              resolve(file)
+            } catch (_) {
+              blob.name = targetName
+              resolve(blob)
             }
           },
           'image/jpeg',
@@ -619,13 +651,18 @@ function compressImageFile(file, maxWidth = 1600, quality = 0.82) {
   })
 }
 
-// 选择结婚证图片回调（选图后预览并清除旧错误提示，点击提交时随 submit 接口统一上传）
+// 选择结婚证图片回调（选图后预览并清除旧错误提示，限制 10MB 上限）
 async function handleFileChange(event) {
   const rawFile = event.target.files && event.target.files[0]
   if (!rawFile) return
 
   ocrErrorTip.value = false
   const processedFile = await compressImageFile(rawFile)
+  if (processedFile.size > 10 * 1024 * 1024) {
+    showToast('照片大小不能超过10MB，请重新选择')
+    return
+  }
+  revokeCertPreview()
   certFile.value = processedFile
   certPreviewUrl.value = URL.createObjectURL(processedFile)
 }
@@ -689,9 +726,10 @@ function handleSubmitErrorMessage(errMsg) {
     return
   }
 
-  // 4. token 查不到 / 链接无效或已过期 / 时间已超期 -> 图9 锁屏
+  // 4. token 查不到 / 链接无效或已失效或已过期 / 时间已超期 -> 图9 锁屏
   if (
     msg.includes('无效') ||
+    msg.includes('失效') ||
     msg.includes('已过期') ||
     msg.includes('超期') ||
     msg.includes('不可进行身份验真')
@@ -701,17 +739,17 @@ function handleSubmitErrorMessage(errMsg) {
     return
   }
 
-  // 5. 结婚证字号或身份证号不达标 -> 图12 红字提示 + 居中黑色 Toast
+  // 5. 结婚证未传图或识别不达标 -> 图12 红字提示 + 居中黑色 Toast
+  if (msg.includes('请上传结婚证照片')) {
+    showToast(msg)
+    return
+  }
   if (msg.includes('未识别到有效的结婚证') || msg.includes('结婚证')) {
     ocrErrorText.value = msg.includes('未识别到有效')
       ? msg
       : '未识别到有效的结婚证编号或身份证号，请上传清晰的结婚证内页照片'
     ocrErrorTip.value = true
-    showToast(
-      msg.includes('请上传结婚证照片')
-        ? msg
-        : '结婚证识别失败，请查看图例后重新上传'
-    )
+    showToast('结婚证识别失败，请查看图例后重新上传')
     return
   }
 
@@ -727,28 +765,22 @@ function handleSubmitErrorMessage(errMsg) {
 
 // 点击提交/重新提交验真
 async function handleSubmitVerify() {
+  if (isSubmitting.value) return
+
   if (!verifyToken.value) {
     banquetInfo.value.valid = false
     banquetInfo.value.invalidReason = '验真链接无效或已过期，不可进行身份验真'
     return
   }
 
-  // 1. 本地校验单场宴席至多验真 5 次限制
-  if (banquetInfo.value.verifyCount >= (banquetInfo.value.maxVerifyCount || 5)) {
-    activeModal.value = 'limit'
-    return
-  }
-
-  // 2. 婚宴校验是否已选择结婚证照片
+  // 1. 婚宴校验是否已选择结婚证照片
   if (isWeddingBanquet.value) {
     if (!certFile.value && !certPreviewUrl.value) {
-      ocrErrorText.value = '未识别到有效的结婚证编号或身份证号，请上传清晰的结婚证内页照片'
-      ocrErrorTip.value = true
       showToast('婚宴请上传结婚证照片')
       return
     }
   } else {
-    // 3. 非婚宴校验身份证号格式
+    // 2. 非婚宴校验身份证号格式
     if (!idCardNumber.value) {
       idCardErrorTip.value = '请输入主家身份证号'
       return
@@ -759,7 +791,8 @@ async function handleSubmitVerify() {
     }
   }
 
-  // 4. 打开“正在验真...”弹窗（图3）
+  // 3. 加锁并打开“正在验真...”弹窗（图3），验真次数上限由后端 submit 实时核准
+  isSubmitting.value = true
   activeModal.value = 'verifying'
 
   try {
@@ -803,13 +836,18 @@ async function handleSubmitVerify() {
       (err && err.message) ||
       '网络异常，请稍后再试'
     handleSubmitErrorMessage(errMsg)
+  } finally {
+    isSubmitting.value = false
   }
 }
 
-// 确认验真通过弹窗 -> 更新页面为【验真通过 '2'】（图6）
+// 确认验真通过弹窗 -> 更新页面为【验真通过 '2'】（图6），并清理敏感表单缓存
 function handleConfirmPassedModal() {
   activeModal.value = ''
   banquetInfo.value.verifyStatus = VERIFY_STATUS.PASSED
+  certFile.value = null
+  revokeCertPreview()
+  idCardNumber.value = ''
 }
 
 // 确认验真未通过弹窗 -> 更新页面为【验真未通过 '3'】（图7）
@@ -940,6 +978,18 @@ async function fetchInitData() {
 
 onMounted(() => {
   fetchInitData()
+})
+
+onBeforeUnmount(() => {
+  if (pageLoadingTimer) {
+    clearTimeout(pageLoadingTimer)
+    pageLoadingTimer = null
+  }
+  if (toastTimer) {
+    clearTimeout(toastTimer)
+    toastTimer = null
+  }
+  revokeCertPreview()
 })
 </script>
 
@@ -1252,6 +1302,11 @@ onMounted(() => {
   &:active {
     opacity: 0.88;
   }
+}
+
+.banquet-btn-disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 .banquet-lock-card {

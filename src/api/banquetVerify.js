@@ -34,17 +34,14 @@ export async function submitBanquetVerify({ token, image, idNo }) {
   const formData = new FormData()
   formData.append('token', token || '')
   if (image) {
-    formData.append('image', image)
+    const fileName = image.name || `marriage_cert_${Date.now()}.jpg`
+    formData.append('image', image, fileName)
   }
   if (idNo !== undefined && idNo !== null && idNo !== '') {
     formData.append('idNo', idNo)
   }
 
-  const response = await h5Http.post('/rest/banquet/hostVerify/submit', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data'
-    }
-  })
+  const response = await h5Http.post('/rest/banquet/hostVerify/submit', formData)
   return response.data
 }
 
