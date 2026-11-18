@@ -7,7 +7,7 @@
           <path d="M15 19L8 12L15 5" stroke="#1F1F1F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </div>
-      <div class="banquet-header-title">宴席主家信息验真2</div>
+      <div class="banquet-header-title">宴席主家信息验真4</div>
       <div class="banquet-header-placeholder"></div>
     </div>
 
